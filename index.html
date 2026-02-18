@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pro Photo Arranger - Crop & Touch</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        :root {
+            --a4-w: 210mm;
+            --a4-h: 297mm;
+        }
+
+        body {
+            background-color: #0f172a;
+            margin: 0;
+            font-family: system-ui, -apple-system, sans-serif;
+            touch-action: none;
+            overflow: hidden;
+            color: white;
+        }
+
+        header {
+            height: 75px;
+            background: #1e293b;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            position: fixed;
+            top: 0;
+            width: 100%;
+            z-index: 2000;
+            border-bottom: 2px solid #334155;
+        }
+
+        .workspace {
+            width: 100vw;
+            height: 100vh;
+            overflow: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 90px 0 200px 0;
+        }
+
+        .a4-page {
+            width: var(--a4-w);
+            height: var(--a4-h);
+            background: white;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+            position: relative;
+            flex-shrink: 0;
+            overflow: hidden;
+            margin-bottom: 40px;
+        }
+
+        .photo-item {
+            position: absolute;
+            cursor: move;
+            touch-action: none;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f1f5f9;
+            overflow: hidden; /* This creates the crop effect */
+        }
+
+        .photo-item.active {
+            outline: 4px solid #3b82f6;
+            outline-offset: -2px;
+            z-index: 500;
+        }
+
+        .photo-img {
+            position: absolute;
+            width: auto;
+            height: auto;
+            min-width: 100%;
+            min-height: 100%;
+            pointer-events: none;
+            display: block;
+            transform-origin: center center;
+        }
+
+        /* UI Overlays */
+        .item-controls {
+            position: absolute;
+            top: -45px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            background: #1e293b;
+            border-radius: 20px;
+            padding: 4px 12px;
+            gap: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            white-space: nowrap;
+            z-index: 1001;
+            align-items: center;
+        }
+        .photo-item.active .item-controls { display: flex; }
+
+        .crop-handle {
+            position: absolute;
+            width: 35px;
+            height: 35px;
+            background: #3b82f6;
+            border: 3px solid white;
+            border-radius: 50%;
+            bottom: -15px;
+            right: -15px;
+            display: none;
+            z-index: 1001;
+        }
+        .photo-item.active .crop-handle { display: block; }
+
+        .bottom-bar {
+            position: fixed;
+            bottom: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 14px 24px;
+            border-radius: 60px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 2100;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .nav-pad {
+            position: fixed;
+            right: 20px;
+            bottom: 120px;
+            display: grid;
+            grid-template-columns: repeat(3, 55px);
+            grid-template-rows: repeat(3, 55px);
+            gap: 10px;
+            z-index: 2000;
+        }
+
+        .nav-pad-btn {
+            background: #3b82f6;
+            color: white;
+            border-radius: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+        }
+
+        @media print {
+            header, .bottom-bar, .nav-pad, .no-print, .item-controls, .crop-handle { display: none !important; }
+            .workspace { padding: 0 !important; overflow: visible !important; transform: none !important; }
+            .a4-page { box-shadow: none !important; margin: 0 !important; page-break-after: always; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="flex flex-col">
+            <span class="text-blue-400 font-bold text-[10px] tracking-widest uppercase">Pics Per Page</span>
+            <div class="flex items-center gap-4">
+                <input type="range" id="gridRange" min="1" max="16" value="4" class="accent-blue-500 w-28">
+                <span id="gridVal" class="font-black text-2xl text-white">4</span>
+            </div>
+        </div>
+        
+        <div class="flex items-center bg-slate-800 rounded-full px-2 border border-slate-700">
+            <button onclick="changeZoom(-0.1)" class="w-10 h-10 text-2xl font-bold text-slate-300">-</button>
+            <span id="zoomDisplay" class="text-xs font-mono w-10 text-center">80%</span>
+            <button onclick="changeZoom(0.1)" class="w-10 h-10 text-2xl font-bold text-slate-300">+</button>
+        </div>
+    </header>
+
+    <div class="nav-pad no-print">
+        <button onclick="manualMove(0, -10)" class="nav-pad-btn">↑</button>
+        <button onclick="manualMove(-10, 0)" class="nav-pad-btn">←</button>
+        <button onclick="deselectAll()" class="nav-pad-btn bg-red-500 text-[10px] font-bold">DONE</button>
+        <button onclick="manualMove(10, 0)" class="nav-pad-btn">→</button>
+        <button onclick="manualMove(0, 10)" class="nav-pad-btn">↓</button>
+    </div>
+
+    <div class="workspace" id="workspace">
+        <div id="page-wrapper" class="flex flex-col items-center gap-12"></div>
+    </div>
+
+    <div class="bottom-bar no-print">
+        <button onclick="document.getElementById('fileIn').click()" class="bg-blue-600 px-6 py-2.5 rounded-full font-bold text-xs uppercase shadow-lg">📷 Add Images</button>
+        <button onclick="autoArrange()" class="bg-indigo-600 px-5 py-2.5 rounded-full text-xs font-bold uppercase shadow-lg">✨ Auto Grid</button>
+        <button onclick="deselectAll()" class="bg-slate-700 px-5 py-2.5 rounded-full text-xs font-bold uppercase">Deselect</button>
+        <div class="w-px h-8 bg-slate-600"></div>
+        <button onclick="downloadPDF()" class="bg-emerald-600 px-6 py-2.5 rounded-full text-xs font-bold uppercase shadow-lg">💾 Save PDF</button>
+    </div>
+
+    <input type="file" id="fileIn" multiple accept="image/*" class="hidden">
+
+    <script>
+        const pageWrapper = document.getElementById('page-wrapper');
+        const workspace = document.getElementById('workspace');
+        const fileIn = document.getElementById('fileIn');
+        const gridRange = document.getElementById('gridRange');
+        const gridVal = document.getElementById('gridVal');
+        const zoomDisplay = document.getElementById('zoomDisplay');
+
+        let allPhotos = [];
+        let activeItem = null;
+        let activeData = null;
+        let currentZoom = 0.8;
+
+        function changeZoom(v) {
+            currentZoom = Math.min(Math.max(0.1, currentZoom + v), 2);
+            pageWrapper.style.transform = `scale(${currentZoom})`;
+            pageWrapper.style.transformOrigin = 'top center';
+            zoomDisplay.innerText = Math.round(currentZoom * 100) + '%';
+        }
+        changeZoom(0);
+
+        function deselectAll() {
+            document.querySelectorAll('.photo-item').forEach(el => el.classList.remove('active'));
+            activeItem = null; activeData = null;
+        }
+
+        function manualMove(x, y) {
+            if (activeData && activeItem) {
+                activeData.x += x; activeData.y += y;
+                activeItem.style.left = activeData.x + 'px';
+                activeItem.style.top = activeData.y + 'px';
+            } else {
+                workspace.scrollBy({ top: y * 5, behavior: 'smooth' });
+            }
+        }
+
+        gridRange.oninput = () => {
+            gridVal.innerText = gridRange.value;
+            autoArrange();
+        };
+
+        fileIn.onchange = (e) => {
+            const files = Array.from(e.target.files);
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (re) => {
+                    allPhotos.push({ 
+                        src: re.target.result, 
+                        x: null, y: null, width: 0, height: 0, 
+                        rotate: 0, imgX: 0, imgY: 0, imgScale: 1,
+                        isCropMode: false 
+                    });
+                    autoArrange();
+                };
+                reader.readAsDataURL(file);
+            });
+            fileIn.value = '';
+        };
+
+        function autoArrange() {
+            allPhotos.forEach(p => p.x = null);
+            render();
+        }
+
+        function render() {
+            pageWrapper.innerHTML = '';
+            const perPage = parseInt(gridRange.value);
+            const totalPages = Math.ceil(allPhotos.length / perPage) || 1;
+
+            let cols = 1;
+            if (perPage > 1) cols = 2;
+            if (perPage > 4) cols = 3;
+            if (perPage > 9) cols = 4;
+            const rows = Math.ceil(perPage / cols);
+
+            for (let i = 0; i < totalPages; i++) {
+                const page = document.createElement('div');
+                page.className = 'a4-page';
+
+                const slice = allPhotos.slice(i * perPage, (i + 1) * perPage);
+                slice.forEach((photo, idx) => {
+                    const globalIdx = (i * perPage) + idx;
+                    if (photo.x === null) {
+                        const cellW = 794 / cols;
+                        const cellH = 1123 / rows;
+                        photo.width = cellW * 0.9;
+                        photo.height = cellH * 0.9;
+                        photo.x = ((idx % cols) * cellW) + (cellW - photo.width) / 2;
+                        photo.y = (Math.floor(idx / cols) * cellH) + (cellH - photo.height) / 2;
+                    }
+
+                    const item = document.createElement('div');
+                    item.className = 'photo-item';
+                    item.style.width = photo.width + 'px';
+                    item.style.height = photo.height + 'px';
+                    item.style.left = photo.x + 'px';
+                    item.style.top = photo.y + 'px';
+
+                    const img = document.createElement('img');
+                    img.src = photo.src;
+                    img.className = 'photo-img';
+                    img.style.left = photo.imgX + 'px';
+                    img.style.top = photo.imgY + 'px';
+                    img.style.transform = `scale(${photo.imgScale}) rotate(${photo.rotate}deg)`;
+
+                    const controls = document.createElement('div');
+                    controls.className = 'item-controls no-print';
+                    
+                    const modeBtn = document.createElement('button');
+                    modeBtn.className = `px-3 py-1 rounded-full text-[10px] font-bold ${photo.isCropMode ? 'bg-orange-500' : 'bg-blue-500'}`;
+                    modeBtn.innerText = photo.isCropMode ? 'MODE: CROP PHOTO' : 'MODE: MOVE BOX';
+                    modeBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        photo.isCropMode = !photo.isCropMode;
+                        render();
+                    };
+
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'bg-red-500 text-white px-3 py-1 rounded-full text-[10px] font-bold';
+                    delBtn.innerText = 'DELETE';
+                    delBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        allPhotos.splice(globalIdx, 1);
+                        deselectAll();
+                        render();
+                    };
+
+                    const cropHandle = document.createElement('div');
+                    cropHandle.className = 'crop-handle no-print';
+
+                    controls.appendChild(modeBtn);
+                    controls.appendChild(delBtn);
+                    item.appendChild(img);
+                    item.appendChild(controls);
+                    item.appendChild(cropHandle);
+                    page.appendChild(item);
+
+                    setupTouch(item, photo, img, cropHandle);
+                });
+                pageWrapper.appendChild(page);
+            }
+        }
+
+        function setupTouch(el, data, img, handle) {
+            let isDragging = false, isResizing = false;
+            let startX, startY, startL, startT, startW, startH, startImgX, startImgY;
+            let initialDist = 0, initialScale = 1, initialRot = 0, initialAngle = 0;
+
+            const update = () => {
+                el.style.width = data.width + 'px';
+                el.style.height = data.height + 'px';
+                el.style.left = data.x + 'px';
+                el.style.top = data.y + 'px';
+                img.style.left = data.imgX + 'px';
+                img.style.top = data.imgY + 'px';
+                img.style.transform = `scale(${data.imgScale}) rotate(${data.rotate}deg)`;
+            };
+
+            el.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+                if (activeData !== data) deselectAll();
+                el.classList.add('active');
+                activeItem = el; activeData = data;
+
+                if (e.touches.length === 2) {
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    initialDist = Math.sqrt(dx*dx + dy*dy);
+                    initialAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+                    initialScale = data.imgScale;
+                    initialRot = data.rotate;
+                } else {
+                    const t = e.touches[0];
+                    startX = t.clientX; startY = t.clientY;
+                    startL = data.x; startT = data.y;
+                    startW = data.width; startH = data.height;
+                    startImgX = data.imgX; startImgY = data.imgY;
+                    isResizing = (e.target === handle);
+                    isDragging = !isResizing;
+                }
+            }, {passive: false});
+
+            window.addEventListener('touchmove', (e) => {
+                if (activeData !== data) return;
+                e.preventDefault();
+
+                if (e.touches.length === 2) {
+                    const dx = e.touches[0].clientX - e.touches[1].clientX;
+                    const dy = e.touches[0].clientY - e.touches[1].clientY;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                    data.imgScale = initialScale * (dist / initialDist);
+                    data.rotate = (initialRot + (angle - initialAngle)) % 360;
+                } else if (isResizing) {
+                    const dx = (e.touches[0].clientX - startX) / currentZoom;
+                    const dy = (e.touches[0].clientY - startY) / currentZoom;
+                    data.width = Math.max(50, startW + dx);
+                    data.height = Math.max(50, startH + dy);
+                } else if (isDragging) {
+                    const dx = (e.touches[0].clientX - startX) / currentZoom;
+                    const dy = (e.touches[0].clientY - startY) / currentZoom;
+                    if (data.isCropMode) {
+                        data.imgX = startImgX + dx;
+                        data.imgY = startImgY + dy;
+                    } else {
+                        data.x = startL + dx;
+                        data.y = startT + dy;
+                    }
+                }
+                update();
+            }, {passive: false});
+
+            window.addEventListener('touchend', () => { isDragging = false; isResizing = false; });
+        }
+
+        async function downloadPDF() {
+            deselectAll();
+            const element = document.getElementById('page-wrapper');
+            const opt = { margin: 0, filename: 'print.pdf', image: { type: 'jpeg', quality: 1.0 }, 
+                         html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4' } };
+            const oldZ = currentZoom; changeZoom(1 - currentZoom);
+            try { await html2pdf().set(opt).from(element).save(); } finally { currentZoom = oldZ; changeZoom(0); }
+        }
+
+        render();
+    </script>
+</body>
+</html>
+
